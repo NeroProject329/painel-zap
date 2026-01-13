@@ -1,8 +1,8 @@
 {
-  "name": "painel-zap",
-  "version": "1.0.0",
+   "name": "painel-zap",
+  "type": "module",
   "main": "src/server.js",
-   "scripts": {
+  "scripts": {
     "start": "node src/server.js"
   },
   "keywords": [],
