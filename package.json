@@ -2,8 +2,8 @@
   "name": "painel-zap",
   "version": "1.0.0",
   "main": "src/server.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+   "scripts": {
+    "start": "node src/server.js"
   },
   "keywords": [],
   "author": "",
