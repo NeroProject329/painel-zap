@@ -3,8 +3,11 @@ import express from "express";
 import mongoose from "mongoose";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
+import jwt from "jsonwebtoken";
+import bcrypt from "bcryptjs";
 import ZapConfig from "./models/ZapConfig.js";
-import adminAuth from "./middlewares/adminAuth.js";
+import requireAdmin from "./middlewares/requireAdmin.js";
+
 
 const app = express();
 app.use(express.json());
@@ -12,11 +15,12 @@ app.use(express.json());
 // 🔒 Rate limit no público
 app.use("/api/", rateLimit({ windowMs: 60_000, max: 120 }));
 
-// ✅ CORS: libera LPs + admin (você pode restringir depois)
+// ✅ CORS: libera LPs + admin
+// (por enquanto liberado geral; depois a gente coloca whitelist)
 app.use(cors({
-  origin: (origin, cb) => cb(null, true), // depois a gente troca por whitelist
+  origin: (origin, cb) => cb(null, true),
   methods: ["GET", "POST", "DELETE"],
-  allowedHeaders: ["Content-Type", "x-admin-secret"]
+  allowedHeaders: ["Content-Type", "Authorization"] // 👈 importante agora
 }));
 
 function normalizeDomain(raw) {
@@ -32,7 +36,53 @@ function normalizePhone(raw) {
   return String(raw || "").replace(/\D/g, "");
 }
 
-// ✅ Público: pega número do domínio
+// ==========================
+// 🔐 AUTH (Login do Admin)
+// ==========================
+app.post("/auth/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (
+      email !== process.env.ADMIN_EMAIL ||
+      password !== process.env.ADMIN_PASSWORD
+    ) {
+      return res.status(401).json({ error: "Credenciais inválidas" });
+    }
+
+    const token = jwt.sign(
+      { role: "ADMIN" },
+      process.env.JWT_SECRET,
+      { expiresIn: "12h" }
+    );
+
+    return res.json({ token });
+  } catch (err) {
+    console.error("Erro no login:", err);
+    return res.status(500).json({ error: "Erro ao autenticar" });
+  }
+});
+
+
+// Middleware para proteger rotas admin
+function requireAdmin(req, res, next) {
+  const auth = req.headers.authorization || "";
+  if (!auth.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Não autorizado" });
+  }
+
+  try {
+    const token = auth.split(" ")[1];
+    jwt.verify(token, process.env.JWT_SECRET);
+    next();
+  } catch {
+    return res.status(401).json({ error: "Token inválido" });
+  }
+}
+
+// ==========================
+// ✅ PÚBLICO (LPs)
+// ==========================
 app.get("/api/zap", async (req, res) => {
   try {
     const domain = normalizeDomain(req.query.domain);
@@ -46,8 +96,10 @@ app.get("/api/zap", async (req, res) => {
   }
 });
 
-// ✅ Admin: salva número por domínio
-app.post("/admin/save-zap", adminAuth, async (req, res) => {
+// ==========================
+// ✅ ADMIN (Painel)
+// ==========================
+app.post("/admin/save-zap", requireAdmin, async (req, res) => {
   try {
     const domain = normalizeDomain(req.body.domain);
     const numero = normalizePhone(req.body.numero);
@@ -67,8 +119,7 @@ app.post("/admin/save-zap", adminAuth, async (req, res) => {
   }
 });
 
-// (opcional) Admin: apagar config de um domínio
-app.delete("/admin/delete-zap", adminAuth, async (req, res) => {
+app.delete("/admin/delete-zap", requireAdmin, async (req, res) => {
   try {
     const domain = normalizeDomain(req.body.domain);
     if (!domain) return res.status(400).json({ error: "domain obrigatório" });
@@ -78,6 +129,19 @@ app.delete("/admin/delete-zap", adminAuth, async (req, res) => {
   } catch (err) {
     console.error("Erro ao apagar zap:", err);
     res.status(500).json({ error: "Erro ao apagar número" });
+  }
+});
+
+app.get("/admin/list-zap", requireAdmin, async (req, res) => {
+  try {
+    const list = await ZapConfig
+      .find({}, { _id: 0, domain: 1, numero: 1 })
+      .sort({ domain: 1 });
+
+    res.json(list);
+  } catch (err) {
+    console.error("Erro ao listar zaps:", err);
+    res.status(500).json({ error: "Erro ao listar domínios" });
   }
 });
 
